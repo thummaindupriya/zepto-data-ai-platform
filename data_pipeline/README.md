@@ -54,6 +54,10 @@ The following transformations are applied:
    * Invalid books are skipped instead of crashing the complete scraping process.
    * Missing category information is represented as "Unknown".
 
+### Data Quality Handling
+
+The scraper validates required fields before adding a book to the final dataset. If a required field is missing or a request fails for an individual book, that book is skipped and the remaining scraping process continues.
+
 ## Final Dataset
 
 The cleaned dataset contains:
