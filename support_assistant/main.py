@@ -31,8 +31,10 @@ KEYWORDS = [
 class GraphState(TypedDict, total=False):
     query: str
     intent: str
-    answer: str
+    context: str
     sources: list[str]
+    prompt: str
+    answer: str
     confidence: float
 
 
@@ -47,7 +49,6 @@ class AskResponse(BaseModel):
 
 
 app = FastAPI(title="Zepto Support Assistant")
-
 
 _embedding_model = None
 _collection = None
@@ -76,14 +77,12 @@ def classify_intent(state: GraphState):
     query = state["query"].lower()
 
     if any(keyword in query for keyword in KEYWORDS):
-        intent = "policy_question"
-    else:
-        intent = "general_question"
+        return {"intent": "policy_question"}
 
-    return {"intent": intent}
+    return {"intent": "general_question"}
 
 
-def retrieve_and_answer(state: GraphState):
+def retrieve_context(state: GraphState):
     query = state["query"]
 
     model = get_embedding_model()
@@ -105,7 +104,7 @@ def retrieve_and_answer(state: GraphState):
 
     if not documents:
         return {
-            "answer": "I could not find relevant information in the Zepto policy documents.",
+            "context": "",
             "sources": [],
             "confidence": 0.0,
         }
@@ -119,32 +118,73 @@ def retrieve_and_answer(state: GraphState):
 
     context = "\n\n".join(context_parts)
 
-    prompt = PROMPT_TEMPLATE.format(
-        query=query,
-        context=context,
-    )
-
-    # MOCK_LLM baseline:
-    # deterministic answer from the highest-ranked retrieved chunk.
-    del prompt
-
-    top_chunk = documents[0]
-    top_source = metadatas[0]["doc_id"]
-
-    snippet = top_chunk[:200]
-
-    answer = f"Based on the retrieved context: {snippet}"
+    sources = [
+        metadata["doc_id"]
+        for metadata in metadatas
+    ]
 
     return {
-        "answer": answer,
-        "sources": [metadata["doc_id"] for metadata in metadatas],
+        "context": context,
+        "sources": sources,
+        "confidence": 1.0,
+    }
+
+
+def build_prompt(state: GraphState):
+    prompt = PROMPT_TEMPLATE.format(
+        query=state["query"],
+        context=state.get("context", ""),
+    )
+
+    return {"prompt": prompt}
+
+
+def retrieve_and_answer(state: GraphState):
+    context = state.get("context", "")
+
+    if not context:
+        return {
+            "answer": (
+                "I could not find relevant information "
+                "in the Zepto policy documents."
+            ),
+            "confidence": 0.0,
+        }
+
+    top_chunk = context.split("\n\n")[0]
+
+    if ": " in top_chunk:
+        top_chunk = top_chunk.split(": ", 1)[1]
+
+    sentences = [
+        sentence.strip()
+        for sentence in top_chunk.split(".")
+        if sentence.strip()
+    ]
+
+    query_words = set(state["query"].lower().split())
+
+    best_sentence = max(
+        sentences,
+        key=lambda sentence: len(
+            query_words & set(sentence.lower().split())
+        ),
+    )
+
+    snippet = best_sentence + "."
+
+    return {
+        "answer": f"Based on the retrieved context: {snippet}",
         "confidence": 1.0,
     }
 
 
 def direct_answer(state: GraphState):
     return {
-        "answer": "I can only answer questions about Zepto policies right now.",
+        "answer": (
+            "I can only answer questions about "
+            "Zepto policies right now."
+        ),
         "sources": [],
         "confidence": 1.0,
     }
@@ -157,6 +197,8 @@ def route_intent(state: GraphState):
 workflow = StateGraph(GraphState)
 
 workflow.add_node("classify_intent", classify_intent)
+workflow.add_node("retrieve_context", retrieve_context)
+workflow.add_node("build_prompt", build_prompt)
 workflow.add_node("retrieve_and_answer", retrieve_and_answer)
 workflow.add_node("direct_answer", direct_answer)
 
@@ -166,11 +208,13 @@ workflow.add_conditional_edges(
     "classify_intent",
     route_intent,
     {
-        "policy_question": "retrieve_and_answer",
+        "policy_question": "retrieve_context",
         "general_question": "direct_answer",
     },
 )
 
+workflow.add_edge("retrieve_context", "build_prompt")
+workflow.add_edge("build_prompt", "retrieve_and_answer")
 workflow.add_edge("retrieve_and_answer", END)
 workflow.add_edge("direct_answer", END)
 
@@ -179,7 +223,9 @@ graph = workflow.compile()
 
 @app.post("/ask", response_model=AskResponse)
 def ask(request: AskRequest):
-    result = graph.invoke({"query": request.query})
+    result = graph.invoke(
+        {"query": request.query}
+    )
 
     return AskResponse(
         answer=result["answer"],

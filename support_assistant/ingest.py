@@ -1,4 +1,5 @@
 ﻿from pathlib import Path
+
 import chromadb
 from sentence_transformers import SentenceTransformer
 
@@ -10,22 +11,49 @@ COLLECTION_NAME = "zepto_policies"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
+    """Split a policy document into overlapping text chunks."""
+    text = " ".join(text.split())
+
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks = []
+    start = 0
+
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+
+        if end >= len(text):
+            break
+
+        start = end - overlap
+
+    return chunks
+
+
 def load_documents():
     documents = []
 
     for path in sorted(DOCS_DIR.glob("doc_*.txt")):
         text = path.read_text(encoding="utf-8").strip()
-        documents.append({
-            "id": path.stem,
-            "document": text,
-            "metadata": {
-                "doc_id": path.stem,
-                "source": path.name,
-            },
-        })
 
-    if len(documents) != 8:
-        raise ValueError(f"Expected 8 policy documents, found {len(documents)}")
+        for index, chunk in enumerate(chunk_text(text)):
+            documents.append(
+                {
+                    "id": f"{path.stem}_chunk_{index}",
+                    "document": chunk,
+                    "metadata": {
+                        "doc_id": path.stem,
+                        "chunk_id": f"{path.stem}_chunk_{index}",
+                        "source": path.name,
+                    },
+                }
+            )
+
+    if len(list(DOCS_DIR.glob("doc_*.txt"))) != 8:
+        raise ValueError("Expected exactly 8 policy documents.")
 
     return documents
 
@@ -45,7 +73,7 @@ def main():
 
     collection = client.create_collection(
         name=COLLECTION_NAME,
-        metadata={"description": "Zepto policy documents"},
+        metadata={"description": "Zepto policy document chunks"},
     )
 
     texts = [item["document"] for item in documents]
@@ -64,7 +92,7 @@ def main():
         embeddings=embeddings,
     )
 
-    print(f"Indexed {collection.count()} documents.")
+    print(f"Indexed {collection.count()} document chunks.")
     print(f"Chroma database: {CHROMA_DIR}")
 
 
