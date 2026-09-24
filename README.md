@@ -744,3 +744,8 @@ Generated local files such as the ChromaDB database and Python cache files are e
 
 
 
+
+## Submission Verification
+The project includes all three required modules and a local FastAPI support assistant.
+
+Docker note: the Dockerfile is included for local container execution.
