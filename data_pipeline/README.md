@@ -147,7 +147,9 @@ Finally run the SQL and pandas verification:
 ```powershell
 python queries.py
 ```
+## Validation
 
+The pipeline was validated end-to-end with 60 scraped books. The SQLite database contains 25 categories and 60 books, and the SQL JOIN output was reproduced using `pandas.merge()`.
 ## Reproducibility
 
 The complete pipeline can be regenerated without manually copying data from the website. The scraper obtains the source data programmatically, applies the documented cleaning rules, creates the cleaned CSV, and the database and query scripts use that generated dataset.
