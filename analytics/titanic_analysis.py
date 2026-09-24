@@ -5,7 +5,7 @@ import joblib
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-
+from imblearn.over_sampling import SMOTE
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, LogisticRegression
@@ -23,7 +23,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.ensemble import RandomForestClassifier
 
 warnings.filterwarnings("ignore")
@@ -590,7 +590,130 @@ print(results_df.to_string(index=False))
 
 
 # =========================================================
-# 12. HYPERPARAMETER TUNING
+# 12. CLASS IMBALANCE COMPARISON
+#     Baseline vs class_weight='balanced' vs SMOTE
+# =========================================================
+
+# Preprocessing is fitted only on the training data.
+imbalance_preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", numeric_transformer, numeric_features),
+        ("cat", categorical_transformer, categorical_features),
+    ]
+)
+
+X_train_processed = imbalance_preprocessor.fit_transform(X_train)
+X_test_processed = imbalance_preprocessor.transform(X_test)
+
+imbalance_results = []
+
+# 1. Baseline Logistic Regression
+baseline_model = LogisticRegression(
+    max_iter=2000,
+    random_state=42
+)
+baseline_model.fit(X_train_processed, y_train)
+
+baseline_pred = baseline_model.predict(X_test_processed)
+baseline_prob = baseline_model.predict_proba(X_test_processed)[:, 1]
+
+imbalance_results.append({
+    "model": "Baseline Logistic Regression",
+    "accuracy": accuracy_score(y_test, baseline_pred),
+    "precision": precision_score(y_test, baseline_pred, zero_division=0),
+    "recall": recall_score(y_test, baseline_pred, zero_division=0),
+    "f1": f1_score(y_test, baseline_pred, zero_division=0),
+    "auc": roc_auc_score(y_test, baseline_prob),
+})
+
+# 2. class_weight='balanced'
+balanced_model = LogisticRegression(
+    max_iter=2000,
+    class_weight="balanced",
+    random_state=42
+)
+balanced_model.fit(X_train_processed, y_train)
+
+balanced_pred = balanced_model.predict(X_test_processed)
+balanced_prob = balanced_model.predict_proba(X_test_processed)[:, 1]
+
+imbalance_results.append({
+    "model": "Balanced Logistic Regression",
+    "accuracy": accuracy_score(y_test, balanced_pred),
+    "precision": precision_score(y_test, balanced_pred, zero_division=0),
+    "recall": recall_score(y_test, balanced_pred, zero_division=0),
+    "f1": f1_score(y_test, balanced_pred, zero_division=0),
+    "auc": roc_auc_score(y_test, balanced_prob),
+})
+
+# 3. SMOTE — applied ONLY to the training data
+smote = SMOTE(random_state=42)
+X_train_smote, y_train_smote = smote.fit_resample(
+    X_train_processed,
+    y_train
+)
+
+smote_model = LogisticRegression(
+    max_iter=2000,
+    random_state=42
+)
+smote_model.fit(X_train_smote, y_train_smote)
+
+smote_pred = smote_model.predict(X_test_processed)
+smote_prob = smote_model.predict_proba(X_test_processed)[:, 1]
+
+imbalance_results.append({
+    "model": "SMOTE Logistic Regression",
+    "accuracy": accuracy_score(y_test, smote_pred),
+    "precision": precision_score(y_test, smote_pred, zero_division=0),
+    "recall": recall_score(y_test, smote_pred, zero_division=0),
+    "f1": f1_score(y_test, smote_pred, zero_division=0),
+    "auc": roc_auc_score(y_test, smote_prob),
+})
+
+imbalance_df = pd.DataFrame(imbalance_results)
+
+print("\n" + "=" * 70)
+print("CLASS IMBALANCE COMPARISON")
+print("=" * 70)
+print(imbalance_df.round(4).to_string(index=False))
+
+imbalance_df.to_csv(
+    BASE_DIR / "imbalance_comparison.csv",
+    index=False
+)
+
+
+# =========================================================
+# 13. DECISION TREE VISUALIZATION
+# =========================================================
+
+dt_pipeline = fitted_models["Decision Tree"]
+dt_preprocessor = dt_pipeline.named_steps["preprocessor"]
+dt_model = dt_pipeline.named_steps["model"]
+
+dt_feature_names = dt_preprocessor.get_feature_names_out()
+
+plt.figure(figsize=(20, 10))
+plot_tree(
+    dt_model,
+    feature_names=dt_feature_names,
+    class_names=["Not Survived", "Survived"],
+    filled=True,
+    max_depth=3,
+    fontsize=8
+)
+plt.title("Decision Tree Classifier (First 3 Levels)")
+plt.tight_layout()
+plt.savefig(
+    FIGURE_DIR / "decision_tree.png",
+    dpi=150
+)
+plt.close()
+
+
+# =========================================================
+# 14. HYPERPARAMETER TUNING
 # =========================================================
 
 print("\n" + "=" * 70)
@@ -603,16 +726,21 @@ rf_pipeline = Pipeline(
         (
             "model",
             RandomForestClassifier(
-                random_state=42
+                random_state=42,
+                oob_score=True,
+                bootstrap=True,
+                n_jobs=-1
             )
         ),
     ]
 )
 
+# Required RF search dimensions:
+# n_estimators, max_depth, max_features
 param_grid = {
     "model__n_estimators": [100, 200],
     "model__max_depth": [None, 5, 10],
-    "model__min_samples_split": [2, 5],
+    "model__max_features": ["sqrt", "log2", None],
 }
 
 grid_search = GridSearchCV(
@@ -629,7 +757,21 @@ best_rf = grid_search.best_estimator_
 
 print("Best Random Forest parameters:")
 print(grid_search.best_params_)
-print("Best cross-validation F1:", grid_search.best_score_)
+print("Best cross-validation F1:", round(grid_search.best_score_, 4))
+
+best_rf_model = best_rf.named_steps["model"]
+rf_oob_score = best_rf_model.oob_score_
+
+print("Best Random Forest OOB score:", round(rf_oob_score, 4))
+
+pd.DataFrame([{
+    "best_params": str(grid_search.best_params_),
+    "best_cv_f1": grid_search.best_score_,
+    "oob_score": rf_oob_score
+}]).to_csv(
+    BASE_DIR / "random_forest_tuning.csv",
+    index=False
+)
 
 
 # Evaluate tuned Random Forest
@@ -642,15 +784,16 @@ tuned_metrics = {
     "recall": recall_score(y_test, tuned_pred, zero_division=0),
     "f1": f1_score(y_test, tuned_pred, zero_division=0),
     "auc": roc_auc_score(y_test, tuned_prob),
+    "oob_score": rf_oob_score
 }
 
 print("\nTuned Random Forest:")
 for metric, value in tuned_metrics.items():
-    print(f"{metric.capitalize():10s}: {value:.4f}")
+    print(f"{metric.capitalize():12s}: {value:.4f}")
 
 
 # =========================================================
-# 13. SELECT BEST CLASSIFIER BY F1
+# 15. SELECT BEST CLASSIFIER BY F1
 # =========================================================
 
 comparison_for_selection = results_df.copy()
@@ -679,7 +822,7 @@ print(best_classifier_name)
 
 
 # =========================================================
-# 14. SAVE COMPLETE BEST PIPELINE
+# 16. SAVE COMPLETE BEST PIPELINE
 # =========================================================
 
 if best_classifier_name == "Tuned Random Forest":
@@ -699,7 +842,7 @@ print(MODEL_PATH)
 
 
 # =========================================================
-# 15. RELOAD AND PREDICT RAW NEW INPUT
+# 17. RELOAD AND PREDICT RAW NEW INPUT
 # =========================================================
 
 loaded_pipeline = joblib.load(MODEL_PATH)
@@ -730,7 +873,7 @@ print("Survival probability:", round(new_probability, 4))
 
 
 # =========================================================
-# 16. FARE REGRESSION
+# 18. FARE REGRESSION
 # =========================================================
 
 regression_df = pd.read_csv(CSV_PATH)
@@ -850,7 +993,64 @@ plt.close()
 
 
 # =========================================================
-# 17. SAVE RESULT TABLES
+# 19. HETEROSCEDASTICITY CHECK
+# =========================================================
+
+residual_analysis = pd.DataFrame({
+    "predicted_fare": reg_pred,
+    "residual": residuals
+})
+
+residual_analysis["prediction_quartile"] = pd.qcut(
+    residual_analysis["predicted_fare"],
+    q=4,
+    duplicates="drop"
+)
+
+residual_spread = (
+    residual_analysis
+    .groupby("prediction_quartile", observed=True)["residual"]
+    .std()
+    .reset_index(name="residual_std")
+)
+
+print("\n" + "=" * 70)
+print("HETEROSCEDASTICITY CHECK")
+print("=" * 70)
+print(residual_spread)
+
+if len(residual_spread) >= 2:
+    first_spread = residual_spread["residual_std"].iloc[0]
+    last_spread = residual_spread["residual_std"].iloc[-1]
+
+    if last_spread > first_spread * 1.20:
+        heteroscedasticity_conclusion = (
+            "Residual spread increases toward higher predicted fares, "
+            "providing evidence of heteroscedasticity."
+        )
+    else:
+        heteroscedasticity_conclusion = (
+            "Residual spread does not show a strong increase across "
+            "predicted-fare quartiles, so there is no strong evidence "
+            "of heteroscedasticity from this check."
+        )
+else:
+    heteroscedasticity_conclusion = (
+        "There are not enough prediction groups to assess "
+        "heteroscedasticity reliably."
+    )
+
+print("Conclusion:", heteroscedasticity_conclusion)
+
+residual_spread.to_csv(
+    BASE_DIR / "heteroscedasticity_analysis.csv",
+    index=False
+)
+
+
+# =========================================================
+# 19. SAVE RESULT TABLES
+
 # =========================================================
 
 comparison_for_selection.to_csv(
@@ -870,6 +1070,38 @@ pd.DataFrame([{
 
 missing_report.to_csv(
     BASE_DIR / "missing_value_report.csv"
+)
+
+# Final written recommendation based on the completed model results.
+best_row = comparison_for_selection.loc[
+    comparison_for_selection["f1"].idxmax()
+]
+
+best_model_text = best_row["model"]
+best_f1_text = best_row["f1"]
+best_auc_text = best_row["auc"]
+
+recommendation = (
+    f"The classifier comparison should be interpreted using F1 and AUC together; "
+    f"the selected model by test-set F1 is {best_model_text} "
+    f"(F1={best_f1_text:.4f}, AUC={best_auc_text:.4f}). "
+    f"The class-imbalance experiment compares the baseline, class-weighted, "
+    f"and SMOTE approaches, with recall and F1 showing how imbalance handling "
+    f"changes positive-class detection. "
+    f"The fare regression achieved R2={r2:.4f} and adjusted R2={adjusted_r2:.4f}; "
+    f"its residual analysis conclusion is: {heteroscedasticity_conclusion} "
+    f"These results should be considered together with the EDA findings and "
+    f"the limitations of the Titanic dataset before applying the workflow to new data."
+)
+
+print("\n" + "=" * 70)
+print("FINAL ANALYTICS RECOMMENDATION")
+print("=" * 70)
+print(recommendation)
+
+(BASE_DIR / "analysis_recommendation.txt").write_text(
+    recommendation,
+    encoding="utf-8"
 )
 
 print("\n" + "=" * 70)

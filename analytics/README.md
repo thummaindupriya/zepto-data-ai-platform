@@ -2,7 +2,7 @@
 
 ## Overview
 
-This module performs exploratory data analysis, statistical analysis, predictive classification, and fare regression using the classic Titanic dataset.
+This module performs exploratory data analysis, statistical analysis, predictive classification, class-imbalance analysis, and fare regression using the classic Titanic dataset.
 
 The dataset is loaded from Seaborn exactly once using:
 
@@ -10,33 +10,36 @@ The dataset is loaded from Seaborn exactly once using:
 sns.load_dataset("titanic")
 ```
 
-Immediately after loading, the dataset is saved as titanic.csv so the modeling stage can work from the committed offline fallback.
+Immediately after loading, the dataset is saved as titanic.csv so the modeling stage can work from the saved offline fallback.
 
 ## Files
 
-* titanic_analysis.py — complete EDA, modeling, regression, evaluation, and pipeline-saving script
+* titanic_analysis.py — complete EDA, modeling, class-imbalance analysis, regression, evaluation, and pipeline-saving script
 * titanic.csv — offline Titanic dataset fallback
 * missing_value_report.csv — missing-value analysis
 * classifier_comparison.csv — classifier performance comparison
+* imbalance_comparison.csv — baseline, class-weighted, and SMOTE comparison
 * regression_metrics.csv — fare regression metrics
 * best_classifier_pipeline.joblib — complete fitted preprocessing + classifier pipeline
-* figures/ — generated charts and confusion matrices
+* analysis_recommendation.txt — final analytics recommendation
+* heteroscedasticity_analysis.csv — residual-spread analysis by prediction quartile
+* figures/ — generated charts, confusion matrices, and model visualizations
 
 ## Missing-Value Strategy
 
 The original dataset contains:
 
-| Column        | Missing | Percentage | Strategy           |
-| ------------- | ------: | ---------: | ------------------ |
-|  age          |     177 |     19.87% | Median imputation  |
-|  embarked     |       2 |      0.22% | Drop affected rows |
-|  deck         |     688 |     77.22% | Drop column        |
-|  embark_town  |       2 |      0.22% | Drop affected rows |
+| Column      | Missing | Percentage | Strategy           |
+| ----------- | ------: | ---------: | ------------------ |
+| age         |     177 |     19.87% | Median imputation  |
+| embarked    |       2 |      0.22% | Drop affected rows |
+| deck        |     688 |     77.22% | Drop column        |
+| embark_town |       2 |      0.22% | Drop affected rows |
 
 The thresholds follow the assignment requirements:
 
 * Below 5%: drop affected rows
-* 5%–30%: impute
+* 5%-30%: impute
 * Above 30%: drop the column when appropriate
 
 For modeling, preprocessing is fitted only on the training data using a scikit-learn Pipeline and ColumnTransformer.
@@ -70,7 +73,7 @@ Survival rates:
 
 The sex + class breakdown shows substantial differences across groups. Female first-class passengers had a survival rate of approximately **96.7%**, while male third-class passengers had a survival rate of approximately **13.5%**.
 
-Boolean masking using & was also used to calculate combined groups.
+Boolean masking using `&` was used to calculate combined groups.
 
 ## Correlation Analysis
 
@@ -87,28 +90,28 @@ fare
 
 The two strongest absolute off-diagonal correlations were:
 
-1. pclass and fare: **-0.548**
-2. sibsp and parch: **0.415**
+1. `pclass` and `fare`: **-0.548**
+2. `sibsp` and `parch`: **0.415**
 
 The negative relationship between class number and fare indicates that lower numerical passenger-class values are associated with higher fares. The positive relationship between siblings/spouses and parents/children indicates that these family-related variables tend to increase together.
 
 ## Multivariate Data Story
 
-### Survival by Sex and Passenger Class
+### 1. Survival by Sex and Passenger Class
 
-The chart compares survival rates across passenger classes separately for males and females. It shows that survival varied jointly with sex and class rather than being explained by either variable in isolation.
+The chart compares survival rates across passenger classes separately for males and females. Survival varies jointly with sex and passenger class, with the largest observed survival rates among female passengers in higher classes.
 
-### Age vs Fare by Survival
+### 2. Age vs Fare by Survival
 
-The scatter plot shows the relationship between age and fare while distinguishing survival outcomes. Higher fares are concentrated more heavily among first-class passengers, while survival patterns are distributed across age and fare combinations.
+The scatter plot shows age and fare while distinguishing survival outcomes. Higher fares are concentrated more heavily among higher-class passengers, while survival outcomes occur across different age and fare combinations.
 
-### Fare Distribution by Class and Survival
+### 3. Fare Distribution by Class and Survival
 
-The boxplot compares fare distributions across passenger classes and survival outcomes. First-class passengers generally paid substantially higher fares, while fare distributions also differ between survivors and non-survivors.
+The boxplot compares fare distributions across passenger classes and survival outcomes. First-class passengers generally paid substantially higher fares, and the fare distributions also differ between survivors and non-survivors.
 
-### Survival Rate by Family Size
+### 4. Survival Rate by Family Size
 
-Family size was calculated as sibsp + parch + 1. The resulting chart shows that survival rates vary across family-size groups, suggesting that family composition is relevant when interpreting passenger outcomes.
+Family size was calculated as `sibsp + parch + 1`. The resulting chart shows that survival rates vary across family-size groups, indicating that family composition provides additional context when interpreting passenger outcomes.
 
 ## Exploratory Standardization
 
@@ -134,11 +137,19 @@ This standardization is exploratory and separate from the modeling preprocessing
 
 A stratified 80/20 train-test split was used so that the survival-class proportion remained similar in training and testing data.
 
+The split produced:
+
+* Training rows: **712**
+* Testing rows: **179**
+* Overall survival rate: **0.3838**
+* Training survival rate: **0.3834**
+* Testing survival rate: **0.3855**
+
 The preprocessing pipeline:
 
 * Median-imputes numeric missing values
 * Most-frequent imputes categorical missing values
-* One-hot encodes `sex` and `embarked`
+* One-hot encodes sex and embarked
 * Standardizes numeric features
 * Fits preprocessing only on training data
 
@@ -150,39 +161,86 @@ Three classifiers were evaluated.
 | Decision Tree       |   0.8156 |    0.7903 | 0.7101 | 0.7481 | 0.7904 |
 | Random Forest       |   0.8156 |    0.8000 | 0.6957 | 0.7442 | 0.8287 |
 
-## Hyperparameter Tuning
+Confusion matrices are saved in the figures/ directory.
+
+A labeled Decision Tree visualization is also generated and saved in the `figures/` directory.
+
+## Class Imbalance Analysis
+
+The survival target is imbalanced, so three Logistic Regression approaches were compared:
+
+1. Baseline Logistic Regression
+2. Logistic Regression with class_weight="balanced"
+3. Logistic Regression trained with SMOTE applied only to the training data
+
+| Model                        | Accuracy | Precision | Recall |     F1 |    AUC |
+| ---------------------------- | -------: | --------: | -----: | -----: | -----: |
+| Baseline Logistic Regression |   0.8045 |    0.7931 | 0.6667 | 0.7244 | 0.8437 |
+| Balanced Logistic Regression |   0.8045 |    0.7297 | 0.7826 | 0.7552 | 0.8464 |
+| SMOTE Logistic Regression    |   0.8101 |    0.7397 | 0.7826 | 0.7606 | 0.8414 |
+
+SMOTE was applied only to the training data after the preprocessing transformation, while the test data remained unchanged. Compared with the baseline, both imbalance-handling approaches increased recall, and the SMOTE model produced the highest F1 among the three approaches.
+
+The results are saved in:
+
+```text
+imbalance_comparison.csv
+```
+
+## Random Forest Hyperparameter Tuning
 
 Random Forest was tuned using GridSearchCV.
 
-Best parameters:
+The search covered:
+
+* n_estimators
+* max_depth
+* max_features
+
+The best parameters from the executed run were:
 
 ```text
-n_estimators = 200
-max_depth = 10
-min_samples_split = 5
+n_estimators = 100
+max_depth = 5
+max_features = sqrt
 ```
 
-The tuned Random Forest achieved:
+Best cross-validation F1:
 
-* Accuracy: **0.8156**
-* Precision: **0.8333**
-* Recall: **0.6522**
-* F1: **0.7317**
-* AUC: **0.8308**
+```text
+0.7459
+```
+
+The tuned Random Forest produced:
+
+| Metric    |  Value |
+| --------- | -----: |
+| Accuracy  | 0.8156 |
+| Precision | 0.8750 |
+| Recall    | 0.6087 |
+| F1        | 0.7179 |
+| AUC       | 0.8431 |
+| OOB Score | 0.8272 |
+
+The Random Forest was configured with oob_score=True, and the resulting OOB score was **0.8272**.
 
 ## Classifier Selection
 
-Using test-set F1 as the selection criterion, the Decision Tree produced the highest F1 among the evaluated final models:
+Using test-set F1 as the selection criterion, the Decision Tree produced the highest F1 among the evaluated final classifiers.
 
-**F1 = 0.7481**
+Decision Tree results:
 
-Its accuracy was **0.8156**, recall was **0.7101**, and AUC was **0.7904**.
+* Accuracy: **0.8156**
+* Precision: **0.7903**
+* Recall: **0.7101**
+* F1: **0.7481**
+* AUC: **0.7904**
 
-The selection is based on the measured test metrics rather than a single accuracy value.
+The selection is based on the measured test-set F1 rather than accuracy alone.
 
 ## Fare Regression
 
-A multivariate linear regression model was used to predict fare from the other available features.
+A multivariate Linear Regression model was used to predict fare from the other available features.
 
 Results:
 
@@ -199,17 +257,40 @@ The residual plot is saved as:
 figures/fare_regression_residuals.png
 ```
 
-The residual plot should be inspected visually for changing spread or systematic patterns. The numerical metrics indicate that the regression explains a moderate portion of fare variation, while substantial prediction error remains.
+The regression explains a moderate portion of fare variation, while the MAE and RMSE show that substantial prediction error remains.
+
+## Heteroscedasticity Analysis
+
+Residual standard deviation was calculated across prediction quartiles:
+
+| Prediction Quartile | Residual Std |
+| ------------------- | -----------: |
+| Lowest              |       6.9819 |
+| Q2                  |      10.1045 |
+| Q3                  |      32.0638 |
+| Highest             |      44.6133 |
+
+Residual spread increases toward higher predicted fares. This provides evidence of **heteroscedasticity**, meaning that the variability of regression errors is not constant across the prediction range.
+
+The detailed results are saved in:
+
+```text
+heteroscedasticity_analysis.csv
+```
+
+## Final Analytics Recommendation
+
+The classifier comparison should be interpreted using F1 and AUC together rather than accuracy alone. The Decision Tree had the highest test-set F1 among the evaluated final classifiers, while the imbalance experiment showed that both class weighting and SMOTE improved positive-class recall compared with the baseline. The fare regression achieved R² = **0.3975** and adjusted R² = **0.3655**, with residual analysis providing evidence of heteroscedasticity. These results should be considered together with the EDA findings and the limitations of the Titanic dataset before applying the workflow to new data.
 
 ## Saved Pipeline
 
-The complete best classifier pipeline is saved as:
+The complete selected classifier pipeline is saved as:
 
 ```text
 best_classifier_pipeline.joblib
 ```
 
-The saved object contains both preprocessing and the final estimator, rather than only the classifier.
+The saved object contains both preprocessing and the final estimator rather than only the classifier.
 
 The script also reloads the saved pipeline using joblib.load() and demonstrates prediction on a raw passenger record.
 
@@ -223,17 +304,34 @@ python analytics/titanic_analysis.py
 
 The script generates:
 
+```text
 analytics/
 ├── titanic_analysis.py
 ├── titanic.csv
 ├── missing_value_report.csv
 ├── classifier_comparison.csv
+├── imbalance_comparison.csv
 ├── regression_metrics.csv
+├── heteroscedasticity_analysis.csv
+├── analysis_recommendation.txt
 ├── best_classifier_pipeline.joblib
 └── figures/
+```
 
 ## Reproducibility
 
-The first execution requires internet access because Seaborn downloads the Titanic dataset. The dataset is immediately saved to titanic.csv.
+The first execution requires internet access because Seaborn downloads the Titanic dataset.
 
-Subsequent modeling uses the saved CSV and does not call sns.load_dataset("titanic") again.
+The dataset is immediately saved to:
+
+```text
+analytics/titanic.csv
+```
+
+Subsequent modeling uses the saved CSV and does not call:
+
+```python
+sns.load_dataset("titanic")
+```
+
+again.
